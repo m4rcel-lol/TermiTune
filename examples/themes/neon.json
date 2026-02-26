@@ -1,0 +1,18 @@
+{
+  "name": "neon",
+  "description": "Vibrant neon cyberpunk theme",
+  "border_type": "double",
+  "colors": {
+    "fg":           "#e0e0e0",
+    "bg":           "#0d0d0d",
+    "accent":       "#00ff9f",
+    "progress_bar": "#ff007f",
+    "visualizer":   ["#00ff9f", "#00cfff", "#ff007f", "#ffdd00"],
+    "highlight_fg": "#0d0d0d",
+    "highlight_bg": "#00ff9f",
+    "border":       "#1a1a2e",
+    "title":        "#00ff9f",
+    "subtitle":     "#00cfff",
+    "muted":        "#333333"
+  }
+}

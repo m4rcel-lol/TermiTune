@@ -1,0 +1,27 @@
+{
+  "music_dir": "~/Music",
+  "theme": "default",
+  "volume": 0.7,
+  "visualizer_mode": "bars",
+  "visualizer_sensitivity": 1.0,
+  "last_playlist": null,
+  "last_track_index": 0,
+  "restore_session": true,
+  "show_notifications": false,
+  "keybindings": {
+    "play_pause":    " ",
+    "next":          "n",
+    "previous":      "p",
+    "loop_toggle":   "l",
+    "shuffle":       "s",
+    "visualizer":    "v",
+    "theme":         "t",
+    "search":        "/",
+    "quit":          "q",
+    "volume_up":     "+",
+    "volume_down":   "-",
+    "mute":          "m",
+    "seek_forward":  "f",
+    "seek_backward": "b"
+  }
+}
