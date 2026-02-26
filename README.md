@@ -204,4 +204,4 @@ makepkg -si
 
 ## 📄 License
 
-MIT © m4rcel-lol
+Nice © m4rcel-lol
