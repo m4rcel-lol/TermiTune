@@ -1,75 +1,76 @@
-use super::widgets::{draw_key_hints, draw_status_bar, panel_block};
-use crate::{app::App, utils::truncate_str};
+use super::widgets::{block, draw_hints, draw_status_bar, trunc};
+use crate::app::App;
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::Style,
-    text::Span,
+    style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{List, ListItem, Paragraph},
     Frame,
 };
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let theme = app.theme.current().clone();
-    let area  = f.size();
+    let area = f.size();
+    let t    = app.theme.current().clone();
+    let bg   = t.bg();
 
-    let layout = Layout::default()
+    let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(3),
-            Constraint::Length(2),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Min(1), Constraint::Length(2), Constraint::Length(1)])
         .split(area);
 
-    let block = panel_block("  File Browser", true, &theme);
-    let inner = block.inner(layout[0]);
-    f.render_widget(block, layout[0]);
+    let blk   = block("File Browser", true, &t);
+    let inner = blk.inner(outer[0]);
+    f.render_widget(blk, outer[0]);
 
-    let header_area = ratatui::layout::Rect { height: 1, ..inner };
-    let list_area   = ratatui::layout::Rect {
+    // Dir path
+    let dir_area  = ratatui::layout::Rect { height: 1, ..inner };
+    let list_area = ratatui::layout::Rect {
         y:      inner.y + 1,
         height: inner.height.saturating_sub(1),
         ..inner
     };
 
-    let dir_str = app.browser_dir.to_string_lossy();
-    let header  = Paragraph::new(Span::styled(
-        format!(" 📂  {}", dir_str), theme.muted_style(),
-    ));
-    f.render_widget(header, header_area);
+    let dir_str = trunc(&app.browser_dir.to_string_lossy(), inner.width.saturating_sub(4) as usize);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" > ", Style::default().fg(t.accent()).bg(bg)),
+            Span::styled(dir_str, Style::default().fg(t.muted()).bg(bg)),
+        ])).style(Style::default().bg(bg)),
+        dir_area,
+    );
 
-    let visible = list_area.height as usize;
-    let scroll  = if app.browser_sel >= visible { app.browser_sel - visible + 1 } else { 0 };
+    let visible  = list_area.height as usize;
+    let scroll   = if app.browser_sel >= visible { app.browser_sel - visible + 1 } else { 0 };
+    let max_name = list_area.width.saturating_sub(4) as usize;
 
     let items: Vec<ListItem> = app.browser_list
         .iter()
+        .enumerate()
         .skip(scroll)
         .take(visible)
-        .enumerate()
         .map(|(i, e)| {
-            let real_idx = i + scroll;
-            let icon = if e.is_dir { "󰉋 " } else if e.is_audio { "♪ " } else { "  " };
-            let name = truncate_str(&e.name, list_area.width.saturating_sub(4) as usize);
+            let selected = i == app.browser_sel;
+            let icon = if e.is_dir { "> " } else if e.is_audio { "~ " } else { "  " };
+            let name = trunc(&e.name, max_name);
             let text = format!(" {}{}", icon, name);
-            let style = if real_idx == app.browser_sel {
-                theme.highlighted()
+            let style = if selected {
+                Style::default().fg(t.highlight_fg()).bg(t.highlight_bg()).add_modifier(Modifier::BOLD)
             } else if e.is_audio {
-                Style::default().fg(theme.accent())
+                Style::default().fg(t.accent()).bg(bg)
             } else if e.is_dir {
-                Style::default().fg(theme.subtitle())
+                Style::default().fg(t.subtitle()).bg(bg)
             } else {
-                theme.normal()
+                Style::default().fg(t.muted()).bg(bg)
             };
             ListItem::new(text).style(style)
         })
         .collect();
 
-    let list = List::new(items).style(theme.normal());
-    f.render_widget(list, list_area);
+    f.render_widget(List::new(items).style(Style::default().bg(bg)), list_area);
 
-    draw_status_bar(f, layout[1], app);
-    draw_key_hints(f, layout[2], &[
-        ("↑↓/jk", "Navigate"), ("Enter/l", "Open"), ("Backspace/h", "Up"),
-        ("a", "Add folder"), ("1", "Home"), ("q", "Quit"),
-    ], &theme);
+    draw_status_bar(f, outer[1], app);
+    draw_hints(f, outer[2], &[
+        ("j/k","Move"),("Enter","Open"),("Backspace","Up dir"),
+        ("a","Add folder"),("1","Home"),("q","Quit"),
+    ], &t);
 }

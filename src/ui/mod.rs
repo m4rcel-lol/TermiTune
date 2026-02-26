@@ -6,9 +6,9 @@ mod settings;
 mod widgets;
 
 use crate::app::{App, AppPage};
-use ratatui::{backend::Backend, Frame};
+use ratatui::Frame;
 
-pub fn draw<B: Backend>(f: &mut Frame, app: &mut App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     match &app.page {
         AppPage::Home        => home::draw(f, app),
         AppPage::NowPlaying  => player::draw(f, app),

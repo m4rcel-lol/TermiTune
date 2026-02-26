@@ -56,7 +56,7 @@ impl AudioPlayer {
 
         let file   = File::open(path)?;
         let reader = BufReader::new(file);
-        let source = Decoder::new(reader)?;
+        let source = Decoder::new(reader)?.convert_samples::<f32>();
 
         let capture     = Arc::clone(&self.capture);
         let cap_source  = CaptureSource::new(source, capture);

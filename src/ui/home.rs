@@ -1,236 +1,351 @@
-use super::widgets::{draw_key_hints, draw_status_bar, panel_block};
-use crate::{
-    app::{App, FocusedPanel},
-    utils::{format_duration, truncate_str},
-};
+//! Home page — 3-panel layout that adapts to terminal size
+//!
+//! Wide  (>=120 cols):  [Browser 38%] [Playlist 38%] [NowPlaying 24%]
+//! Normal (>=80 cols):  [Browser 42%] [Right: NowPlaying top + Playlist bottom]
+//! Narrow (<80 cols):   Single panel, Tab to switch
+
+use super::widgets::{block, draw_hints, draw_status_bar, progress_line, trunc};
+use crate::app::{App, FocusedPanel};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState, Paragraph, Block, Borders},
+    widgets::{List, ListItem, Paragraph},
     Frame,
 };
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let theme = app.theme.current().clone();
-    let area  = f.size();
+    let area = f.size();
+    let t    = app.theme.current().clone();
+    let bg   = t.bg();
 
-    // Layout: main area + status + hints
+    // Outer layout: [top bar 1] [main] [status 2] [hints 1]
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(5),
+            Constraint::Length(1),
+            Constraint::Min(1),
             Constraint::Length(2),
             Constraint::Length(1),
         ])
         .split(area);
 
-    // Main: left (browser) | right (playlist + now-playing)
+    // ── Top title bar ────────────────────────────────────────────────────────
+    let page_hint = match app.focus {
+        FocusedPanel::FileBrowser => "BROWSER",
+        FocusedPanel::Playlist    => "PLAYLIST",
+        FocusedPanel::NowPlaying  => "NOW PLAYING",
+    };
+    let title_line = Line::from(vec![
+        Span::styled(" TermiTune ", Style::default().fg(t.accent()).bg(bg).add_modifier(Modifier::BOLD)),
+        Span::styled("| ", Style::default().fg(t.border()).bg(bg)),
+        Span::styled(page_hint, Style::default().fg(t.muted()).bg(bg)),
+        Span::styled("  [Tab] switch focus  [2] full player  [3] settings  [4] credits",
+            Style::default().fg(t.muted()).bg(bg)),
+    ]);
+    let title_bar = Paragraph::new(title_line)
+        .style(Style::default().fg(t.fg()).bg(bg));
+    f.render_widget(title_bar, outer[0]);
+
+    // ── Main panels ──────────────────────────────────────────────────────────
+    let w = outer[1].width;
+    if w >= 120 {
+        draw_three_col(f, outer[1], app);
+    } else if w >= 72 {
+        draw_two_col(f, outer[1], app);
+    } else {
+        draw_single(f, outer[1], app);
+    }
+
+    // ── Status + hints ───────────────────────────────────────────────────────
+    draw_status_bar(f, outer[2], app);
+    draw_hints(f, outer[3], &[
+        ("Tab", "Focus"),("Enter", "Play"),("Space", "Pause"),
+        ("n/p", "Skip"),("a", "Add folder"),("+/-", "Vol"),("/","Search"),("q","Quit"),
+    ], &t);
+}
+
+// ─── Three-column layout (wide terminals) ────────────────────────────────────
+
+fn draw_three_col(f: &mut Frame, area: Rect, app: &mut App) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(45),
-            Constraint::Percentage(55),
+            Constraint::Percentage(38),
+            Constraint::Percentage(38),
+            Constraint::Percentage(24),
         ])
-        .split(outer[0]);
+        .split(area);
 
-    // Right column: now-playing (top) + playlist (bottom)
-    let right_rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(7),
-            Constraint::Min(5),
-        ])
-        .split(cols[1]);
-
-    draw_file_browser(f, cols[0], app);
-    draw_now_playing_mini(f, right_rows[0], app);
-    draw_playlist_panel(f, right_rows[1], app);
-    draw_status_bar(f, outer[1], app);
-    draw_key_hints(f, outer[2], &[
-        ("Tab", "Switch panel"), ("Enter", "Select"), ("Space", "Play/Pause"),
-        ("n/p", "Next/Prev"), ("/", "Search"), ("2", "Full player"),
-        ("q", "Quit"),
-    ], &theme);
+    draw_browser_panel(f, cols[0], app);
+    draw_playlist_panel(f, cols[1], app);
+    draw_now_playing_panel(f, cols[2], app);
 }
 
-fn draw_file_browser(f: &mut Frame, area: Rect, app: &App) {
-    let theme   = app.theme.current();
+// ─── Two-column layout (normal terminals) ────────────────────────────────────
+
+fn draw_two_col(f: &mut Frame, area: Rect, app: &mut App) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
+        .split(area);
+
+    draw_browser_panel(f, cols[0], app);
+
+    // Right: now-playing (fixed height) + playlist (rest)
+    let np_h = 9u16.min(cols[1].height / 3);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(np_h), Constraint::Min(1)])
+        .split(cols[1]);
+
+    draw_now_playing_panel(f, right[0], app);
+    draw_playlist_panel(f, right[1], app);
+}
+
+// ─── Single-panel layout (narrow terminals) ──────────────────────────────────
+
+fn draw_single(f: &mut Frame, area: Rect, app: &mut App) {
+    match app.focus {
+        FocusedPanel::FileBrowser => draw_browser_panel(f, area, app),
+        FocusedPanel::Playlist    => draw_playlist_panel(f, area, app),
+        FocusedPanel::NowPlaying  => draw_now_playing_panel(f, area, app),
+    }
+}
+
+// ─── File browser panel ───────────────────────────────────────────────────────
+
+fn draw_browser_panel(f: &mut Frame, area: Rect, app: &App) {
+    let t       = app.theme.current();
     let focused = app.focus == FocusedPanel::FileBrowser;
+    let blk     = block("File Browser", focused, t);
+    let inner   = blk.inner(area);
+    f.render_widget(blk, area);
 
-    let block = panel_block("  File Browser", focused, theme);
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    if inner.height < 2 { return; }
 
-    // Dir path header
-    let header_area = Rect { y: inner.y, height: 1, ..inner };
-    let list_area   = Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner };
+    let bg = t.bg();
 
-    let dir_str = truncate_str(
-        app.browser_dir.to_string_lossy().as_ref(),
-        inner.width as usize,
+    // Dir path row
+    let dir_area  = Rect { height: 1, ..inner };
+    let list_area = Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner };
+
+    let dir_str = trunc(
+        &app.browser_dir.to_string_lossy(),
+        inner.width.saturating_sub(3) as usize,
     );
-    let header = Paragraph::new(format!(" 󰉋  {}", dir_str))
-        .style(theme.muted_style());
-    f.render_widget(header, header_area);
+    let dir_para = Paragraph::new(Line::from(vec![
+        Span::styled(" > ", Style::default().fg(t.accent()).bg(bg)),
+        Span::styled(dir_str, Style::default().fg(t.muted()).bg(bg)),
+    ])).style(Style::default().bg(bg));
+    f.render_widget(dir_para, dir_area);
 
     let visible = list_area.height as usize;
-    let scroll  = {
-        let sel = app.browser_sel;
-        if sel >= visible { sel - visible + 1 } else { 0 }
-    };
+    let scroll  = if app.browser_sel >= visible { app.browser_sel - visible + 1 } else { 0 };
+    let max_name = list_area.width.saturating_sub(4) as usize;
 
     let items: Vec<ListItem> = app.browser_list
         .iter()
+        .enumerate()
         .skip(scroll)
         .take(visible)
-        .enumerate()
         .map(|(i, e)| {
-            let real_idx = i + scroll;
-            let icon = if e.is_dir { "󰉋 " } else if e.is_audio { "♪ " } else { "  " };
-            let name = truncate_str(&e.name, list_area.width.saturating_sub(3) as usize);
-            let text = format!("{}{}", icon, name);
-            let style = if real_idx == app.browser_sel {
-                theme.highlighted()
+            let selected = i == app.browser_sel;
+            let icon = if e.is_dir { "> " } else if e.is_audio { "~ " } else { "  " };
+            let name = trunc(&e.name, max_name);
+            let text = format!(" {}{}", icon, name);
+
+            let style = if selected && focused {
+                Style::default().fg(t.highlight_fg()).bg(t.highlight_bg()).add_modifier(Modifier::BOLD)
             } else if e.is_audio {
-                Style::default().fg(theme.accent())
+                Style::default().fg(t.accent()).bg(bg)
             } else if e.is_dir {
-                Style::default().fg(theme.subtitle())
+                Style::default().fg(t.subtitle()).bg(bg)
             } else {
-                theme.normal()
+                Style::default().fg(t.muted()).bg(bg)
             };
             ListItem::new(text).style(style)
         })
         .collect();
 
-    let list = List::new(items).style(theme.normal());
+    let list = List::new(items).style(Style::default().bg(bg));
     f.render_widget(list, list_area);
 }
 
-fn draw_now_playing_mini(f: &mut Frame, area: Rect, app: &App) {
-    let theme   = app.theme.current();
-    let focused = app.focus == FocusedPanel::NowPlaying;
-    let block   = panel_block("  Now Playing", focused, theme);
-    let inner   = block.inner(area);
-    f.render_widget(block, area);
-
-    if let Some(track) = app.playlist_mgr.current_track() {
-        let state = if app.player.is_paused() { "⏸ Paused" } else { "▶ Playing" };
-        let title  = truncate_str(&track.title,  inner.width as usize);
-        let artist = truncate_str(&track.artist, inner.width as usize);
-        let dur    = format_duration(app.player.elapsed());
-        let total  = format_duration(track.duration);
-        let progress = app.player.progress();
-
-        // Progress bar
-        let bar_w  = inner.width.saturating_sub(2) as usize;
-        let filled = (progress * bar_w as f32) as usize;
-        let empty  = bar_w.saturating_sub(filled);
-        let bar    = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
-        let time   = format!("{} / {}", dur, total);
-
-        let lines: Vec<Line> = vec![
-            Line::from(vec![
-                Span::styled(format!(" {}", state), theme.accent_style()),
-            ]),
-            Line::from(vec![
-                Span::styled(format!(" ♪  {}", title), theme.title_style()),
-            ]),
-            Line::from(vec![
-                Span::styled(format!("    {} — {}", artist, track.album), theme.muted_style()),
-            ]),
-            Line::from(vec![
-                Span::styled(format!(" {}", bar), Style::default().fg(theme.progress())),
-            ]),
-            Line::from(vec![
-                Span::styled(format!(" {}", time), theme.muted_style()),
-            ]),
-        ];
-
-        let para = Paragraph::new(lines).style(theme.normal());
-        f.render_widget(para, inner);
-    } else {
-        let para = Paragraph::new("  No track loaded\n  Browse files to add music")
-            .style(theme.muted_style());
-        f.render_widget(para, inner);
-    }
-}
+// ─── Playlist panel ───────────────────────────────────────────────────────────
 
 fn draw_playlist_panel(f: &mut Frame, area: Rect, app: &App) {
-    let theme   = app.theme.current();
+    let t       = app.theme.current();
     let focused = app.focus == FocusedPanel::Playlist;
     let pl      = app.playlist_mgr.current_playlist();
-    let title   = format!("  {} ({} tracks)", pl.name, pl.tracks.len());
-    let block   = panel_block(&title, focused, theme);
-    let inner   = block.inner(area);
-    f.render_widget(block, area);
+    let n       = pl.tracks.len();
+    let s       = if n == 1 { "track" } else { "tracks" };
+    let title   = format!("Queue  ({} {})", n, s);
+    let blk     = block(&title, focused, t);
+    let inner   = blk.inner(area);
+    f.render_widget(blk, area);
 
-    let filtered: Vec<(usize, _)> = app.playlist_mgr.filtered_tracks();
+    if inner.height < 1 { return; }
 
-    if filtered.is_empty() {
-        let msg = if app.playlist_mgr.search_query.is_empty() {
-            "  Empty playlist\n  Press [a] in browser to add a folder"
+    let bg = t.bg();
+
+    // Optional search row
+    let (search_rows, list_top) = if !app.playlist_mgr.search_query.is_empty() || app.searching {
+        let sa = Rect { height: 1, ..inner };
+        let q  = if app.searching {
+            format!(" / {}|", app.search_buf)
         } else {
-            "  No results"
+            format!(" / {}", app.playlist_mgr.search_query)
         };
-        let para = Paragraph::new(msg).style(theme.muted_style());
-        f.render_widget(para, inner);
-        return;
-    }
-
-    // Search bar
-    let (header_h, list_top) = if !app.playlist_mgr.search_query.is_empty() || app.searching {
-        let header_area = Rect { height: 1, ..inner };
-        let query = if app.searching {
-            format!(" 🔍 {}▋", app.search_buf)
-        } else {
-            format!(" 🔍 {}", app.playlist_mgr.search_query)
-        };
-        let search_para = Paragraph::new(query).style(theme.accent_style());
-        f.render_widget(search_para, header_area);
+        let sp = Paragraph::new(Line::from(vec![
+            Span::styled(q, Style::default().fg(t.accent()).bg(bg)),
+        ])).style(Style::default().bg(bg));
+        f.render_widget(sp, sa);
         (1u16, inner.y + 1)
     } else {
-        (0u16, inner.y)
+        (0, inner.y)
     };
 
     let list_area = Rect {
         y:      list_top,
-        height: inner.height.saturating_sub(header_h),
+        height: inner.height.saturating_sub(search_rows),
         ..inner
     };
+
+    if list_area.height == 0 { return; }
+
+    let filtered = app.playlist_mgr.filtered_tracks();
+    if filtered.is_empty() {
+        let msg = if app.playlist_mgr.search_query.is_empty() {
+            " Empty — browse files and press [Enter] or [a]"
+        } else {
+            " No results"
+        };
+        f.render_widget(
+            Paragraph::new(msg).style(Style::default().fg(t.muted()).bg(bg)),
+            list_area,
+        );
+        return;
+    }
 
     let visible     = list_area.height as usize;
     let current_idx = app.playlist_mgr.current_track;
     let sel         = app.playlist_sel;
     let scroll      = if sel >= visible { sel - visible + 1 } else { 0 };
+    let dur_w       = 6usize;
+    let name_w      = list_area.width.saturating_sub(dur_w as u16 + 4) as usize;
 
     let items: Vec<ListItem> = filtered
         .iter()
         .skip(scroll)
         .take(visible)
         .map(|(real_idx, track)| {
-            let playing = *real_idx == current_idx;
+            let playing  = *real_idx == current_idx;
             let selected = *real_idx == sel;
-            let icon = if playing { "▶ " } else { "  " };
-            let name = truncate_str(
-                &track.display_name(),
-                list_area.width.saturating_sub(8) as usize,
-            );
-            let dur_str = track.duration_str();
-            let text = format!("{}{:<width$} {}", icon, name,
-                dur_str, width = list_area.width.saturating_sub(8 + dur_str.len() as u16) as usize);
+            let prefix   = if playing { ">>" } else { "  " };
+            let name     = trunc(&track.display_name(), name_w);
+            let dur      = track.duration_str();
+            // Pad name to fill available width
+            let pad      = name_w.saturating_sub(name.len());
+            let text     = format!(" {} {}{}  {}", prefix, name, " ".repeat(pad), dur);
 
             let style = if selected && focused {
-                theme.highlighted()
+                Style::default().fg(t.highlight_fg()).bg(t.highlight_bg()).add_modifier(Modifier::BOLD)
             } else if playing {
-                Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)
+                Style::default().fg(t.accent()).bg(bg).add_modifier(Modifier::BOLD)
             } else {
-                theme.normal()
+                Style::default().fg(t.fg()).bg(bg)
             };
             ListItem::new(text).style(style)
         })
         .collect();
 
-    let list = List::new(items).style(theme.normal());
+    let list = List::new(items).style(Style::default().bg(bg));
     f.render_widget(list, list_area);
+}
+
+// ─── Now-playing panel ────────────────────────────────────────────────────────
+
+fn draw_now_playing_panel(f: &mut Frame, area: Rect, app: &App) {
+    let t       = app.theme.current();
+    let focused = app.focus == FocusedPanel::NowPlaying;
+    let blk     = block("Now Playing", focused, t);
+    let inner   = blk.inner(area);
+    f.render_widget(blk, area);
+
+    let bg = t.bg();
+
+    if let Some(track) = app.playlist_mgr.current_track() {
+        let state = if app.player.is_paused() { "|| PAUSED" } else { ">> PLAYING" };
+        let w     = inner.width.saturating_sub(2) as usize;
+
+        let title  = trunc(&track.title,  w);
+        let artist = trunc(&track.artist, w);
+        let album  = trunc(&track.album,  w);
+        let elapsed = crate::utils::format_duration(app.player.elapsed());
+        let total   = crate::utils::format_duration(track.duration);
+        let prog    = app.player.progress();
+
+        let mut lines: Vec<Line> = vec![
+            Line::from(Span::styled(
+                format!(" {}", state),
+                Style::default().fg(t.accent()).bg(bg).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled("", Style::default().bg(bg))),
+            Line::from(Span::styled(
+                format!(" {}", title),
+                Style::default().fg(t.title()).bg(bg).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                format!(" {}", artist),
+                Style::default().fg(t.subtitle()).bg(bg),
+            )),
+            Line::from(Span::styled(
+                format!(" {}", album),
+                Style::default().fg(t.muted()).bg(bg),
+            )),
+            Line::from(Span::styled("", Style::default().bg(bg))),
+        ];
+
+        // Progress bar
+        let bar_w = inner.width.saturating_sub(2) as usize;
+        lines.push(progress_line(prog, bar_w, t));
+        lines.push(Line::from(Span::styled(
+            format!(" {} / {}", elapsed, total),
+            Style::default().fg(t.muted()).bg(bg),
+        )));
+
+        // Volume (only if there's room)
+        if inner.height as usize > lines.len() + 2 {
+            lines.push(Line::from(Span::styled("", Style::default().bg(bg))));
+            let vol_w = inner.width.saturating_sub(12) as usize;
+            let vfill = ((app.player.volume_pct() as usize * vol_w) / 100).min(vol_w);
+            let vempt = vol_w - vfill;
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!(" Vol {:3}%  ", app.player.volume_pct()),
+                    Style::default().fg(t.muted()).bg(bg),
+                ),
+                Span::styled("▓".repeat(vfill), Style::default().fg(t.accent()).bg(bg)),
+                Span::styled("░".repeat(vempt),  Style::default().fg(t.muted()).bg(bg)),
+            ]));
+        }
+
+        let para = Paragraph::new(lines).style(Style::default().bg(bg));
+        f.render_widget(para, inner);
+    } else {
+        let para = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                " No track loaded",
+                Style::default().fg(t.muted()).bg(bg),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                " Browse files and press [Enter]",
+                Style::default().fg(t.muted()).bg(bg),
+            )),
+        ]).style(Style::default().bg(bg));
+        f.render_widget(para, inner);
+    }
 }

@@ -13,33 +13,34 @@ pub fn format_duration(d: Duration) -> String {
 }
 
 pub fn truncate_str(s: &str, max_width: usize) -> String {
-    if s.len() <= max_width {
-        return s.to_string();
-    }
-    if max_width <= 3 {
-        return "...".chars().take(max_width).collect();
-    }
-    format!("{}…", &s[..max_width - 1])
+    if s.len() <= max_width { return s.to_string(); }
+    if max_width <= 1 { return "~".to_string(); }
+    format!("{}~", &s[..max_width - 1])
 }
 
-pub fn center_str(s: &str, width: usize) -> String {
-    let len = s.len();
-    if len >= width { return s.to_string(); }
-    let pad = (width - len) / 2;
-    format!("{:>width$}", s, width = len + pad)
-}
-
-/// Render a progress bar into `width` characters
-pub fn progress_bar(progress: f32, width: usize) -> String {
-    if width == 0 { return String::new(); }
+pub fn progress_bar_parts(progress: f32, width: usize) -> (String, String) {
+    if width == 0 { return (String::new(), String::new()); }
     let filled = (progress.clamp(0.0, 1.0) * width as f32) as usize;
-    let empty  = width - filled;
-    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+    let empty  = width.saturating_sub(filled);
+    ("█".repeat(filled), "░".repeat(empty))
 }
 
-/// Render volume bar
-pub fn volume_bar(pct: u8, width: usize) -> String {
+pub fn progress_bar(progress: f32, width: usize) -> String {
+    let (f, e) = progress_bar_parts(progress, width);
+    format!("{}{}", f, e)
+}
+
+pub fn volume_bar_parts(pct: u8, width: usize) -> (String, String) {
     let filled = (pct as usize * width) / 100;
     let empty  = width.saturating_sub(filled);
-    format!("{}{}", "▓".repeat(filled), "░".repeat(empty))
+    ("▓".repeat(filled), "░".repeat(empty))
+}
+
+pub fn volume_bar(pct: u8, width: usize) -> String {
+    let (f, e) = volume_bar_parts(pct, width);
+    format!("{}{}", f, e)
+}
+
+pub fn pluralize(n: usize, word: &str) -> String {
+    if n == 1 { format!("{} {}", n, word) } else { format!("{} {}s", n, word) }
 }

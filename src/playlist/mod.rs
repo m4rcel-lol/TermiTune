@@ -1,5 +1,5 @@
 use anyhow::Result;
-use lofty::{AudioFile, TaggedFileExt, Tag, ItemKey};
+use lofty::{AudioFile, TaggedFileExt, ItemKey};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -41,7 +41,7 @@ impl Track {
         let props  = tagged.properties();
         let dur    = props.duration();
 
-        let tag: Option<&dyn Tag> = tagged.primary_tag().or_else(|| tagged.first_tag());
+        let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
 
         let title  = tag.and_then(|t| t.get_string(&ItemKey::TrackTitle))
             .map(str::to_string)
@@ -103,9 +103,9 @@ impl LoopMode {
 
     pub fn icon(&self) -> &'static str {
         match self {
-            LoopMode::Off      => "⇥ OFF",
-            LoopMode::Single   => "⟳ ONE",
-            LoopMode::Playlist => "⟲ ALL",
+            LoopMode::Off      => "[>] OFF",
+            LoopMode::Single   => "[1] ONE",
+            LoopMode::Playlist => "[A] ALL",
         }
     }
 }
