@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["m4rcel-lol"]
 description = "A beautiful TUI MP3 music player for Arch Linux"
 license = "MIT"
-repository = "https://github.com/m4rcel-lol/termitune"
+repository = "https://github.com/m4rcel-lol/TermiTune"
 
 [[bin]]
 name = "termitune"
