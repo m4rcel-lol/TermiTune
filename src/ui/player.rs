@@ -178,38 +178,47 @@ fn draw_info_panel(f: &mut Frame, area: Rect, app: &App) {
 // ─── Visualizer panel ─────────────────────────────────────────────────────────
 
 fn draw_visualizer_panel(f: &mut Frame, area: Rect, app: &mut App) {
-    let t    = app.theme.current().clone();
-    let bg   = t.bg();
-    let mode = app.visualizer.mode.name().to_string();
-    let viz_title = format!("Visualizer  {}", mode);
-    let blk  = block(&viz_title, true, &t);
+    let t     = app.theme.current().clone();
+    let bg    = t.bg();
+    let viz_title = format!("Visualizer  {}  [v] next", app.visualizer.mode.name());
+    let blk   = block(&viz_title, true, &t);
     let inner = blk.inner(area);
     f.render_widget(blk, area);
 
     if inner.width < 4 || inner.height < 2 { return; }
 
-    let capture = app.player.capture.clone();
-    let rows    = app.visualizer.render_ascii(
-        &capture,
-        inner.width as usize,
-        inner.height as usize,
-    );
-    let colors  = t.visualizer_colors();
-    let n_cols  = colors.len().max(1);
+    let w = inner.width  as usize;
+    let h = inner.height as usize;
 
-    let lines: Vec<Line> = rows
-        .into_iter()
+    let capture              = app.player.capture.clone();
+    let (base_rows, overlay) = app.visualizer.render(&capture, w, h);
+
+    let colors     = t.visualizer_colors();
+    let n_cols     = colors.len().max(1);
+    let peak_color = colors[0];
+
+    let empty_row = String::new();
+    let lines: Vec<Line> = base_rows
+        .iter()
         .enumerate()
-        .map(|(_, row_text)| {
-            let chars: Vec<Span> = row_text
+        .map(|(row_i, base_row)| {
+            let ov_row = overlay.get(row_i).unwrap_or(&empty_row);
+            let chars: Vec<Span> = base_row
                 .chars()
+                .zip(ov_row.chars().chain(std::iter::repeat(' ')))
                 .enumerate()
-                .map(|(col_i, ch)| {
-                    let color = colors[col_i % n_cols];
-                    Span::styled(
-                        ch.to_string(),
-                        Style::default().fg(color).bg(bg),
-                    )
+                .map(|(col_i, (base_ch, ov_ch))| {
+                    let (ch, color) = if ov_ch != ' ' {
+                        (ov_ch, peak_color)
+                    } else {
+                        (base_ch, colors[col_i % n_cols])
+                    };
+                    let style = if ch == ' ' {
+                        Style::default().bg(bg)
+                    } else {
+                        Style::default().fg(color).bg(bg)
+                    };
+                    Span::styled(ch.to_string(), style)
                 })
                 .collect();
             Line::from(chars)
